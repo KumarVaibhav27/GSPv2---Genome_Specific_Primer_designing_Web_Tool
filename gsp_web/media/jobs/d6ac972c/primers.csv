@@ -1,0 +1,4 @@
+# Specific primers for query
+index	seq id	type	primer start	primer length	product size	Tm	GC content	any	3'	diff count in primer	3' end diff	primer seq
+1	1	LEFT_PRIMER	23	19	144	59.70	52.63	6.00	1.00	6	No	AGGCAATTGTGTGGCTGAC
+1	1	RIGHT_PRIMER	166	20	144	59.45	55.00	8.00	1.00	9	Yes	TCAGCTGACACACACCACAG
