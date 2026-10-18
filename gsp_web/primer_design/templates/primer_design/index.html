@@ -58,6 +58,7 @@
   label.field-label { display: block; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.6px; color: rgba(15,26,15,0.5); margin-bottom: 8px; margin-top: 20px; }
   label.field-label:first-child { margin-top: 0; }
 
+
   textarea { width: 100%; height: 180px; border: 1.5px solid var(--border); border-radius: 10px; padding: 14px; font-family: 'DM Mono', monospace; font-size: 13px; line-height: 1.6; resize: vertical; outline: none; background: var(--paper); color: var(--ink); transition: border-color .2s, box-shadow .2s; }
   textarea:focus { border-color: var(--green-light); box-shadow: 0 0 0 3px rgba(82,183,136,0.15); background: #fff; }
 
@@ -227,15 +228,16 @@
     <div class="card-body">
 
       <div class="mode-tabs">
-        <button class="mode-tab active" data-mode="direct" onclick="switchMode('direct')">Paste your own sequences</button>
-        <button class="mode-tab"        data-mode="blast"  onclick="switchMode('blast')">BLAST against genome</button>
+        <button class="mode-tab"        data-mode="direct" onclick="switchMode('direct')">Paste your own sequences</button>
+        <button class="mode-tab active" data-mode="blast"  onclick="switchMode('blast')">BLAST against genome</button>
         <button class="mode-tab"        data-mode="kasp"   onclick="switchMode('kasp')">KASP markers</button>
       </div>
 
       <!-- Paste your own sequences -->
-      <div id="panel-direct" class="section-panel active">
+      <div id="panel-direct" class="section-panel">
         <label class="field-label">Paste sequences in FASTA format (minimum 2)</label>
-        <textarea id="seq-direct" placeholder=">SubgenomeA&#10;ATGCATGCATGCATGCATGC...&#10;>SubgenomeB&#10;ATGCATGCATGCATGCATGC..."></textarea>
+        <textarea id="seq-direct" placeholder=">SubgenomeA&#10;ATGCATGCATGCATGCATGC...&#10;>SubgenomeB&#10;ATGCATGCATGCATGCATGC..." oninput="checkDirectSeqLength()"></textarea>
+        <div id="direct-len-warning" style="min-height:16px;margin-top:3px;"></div>
         <div class="or-row">or upload file(s)</div>
         <input type="file" id="file-direct" accept=".fas,.fasta,.fa,.txt" multiple style="display:none" onchange="handleDirectFiles(this)">
         <button type="button" class="upload-btn" id="upload-direct-btn"
@@ -255,9 +257,10 @@
       </div>
 
       <!-- BLAST -->
-      <div id="panel-blast" class="section-panel">
+      <div id="panel-blast" class="section-panel active">
         <label class="field-label">Paste your query sequence</label>
-        <textarea id="seq-blast" placeholder=">MyGene&#10;ATGCATGCATGCATGCATGC..."></textarea>
+        <textarea id="seq-blast" placeholder=">MyGene&#10;ATGCATGCATGCATGCATGC..." onpaste="setTimeout(normalizeBlastSeq,30)" oninput="updateBpCounter('seq-blast','blast-bp-counter')"></textarea>
+        <div id="blast-bp-counter" style="text-align:right;font-size:11px;color:rgba(15,26,15,0.4);margin-top:3px;min-height:16px;"></div>
         <div class="or-row">or</div>
         <input type="file" id="file-blast" accept=".fas,.fasta,.fa,.txt" style="display:none" onchange="handleBlastFile(this)">
         <div style="display:flex;gap:8px;align-items:center;">
@@ -273,6 +276,7 @@
         </div>
         <label class="field-label" style="margin-top:20px">Reference genome database</label>
         <select id="database" style="width:100%;padding:10px 12px;border:1.5px solid var(--border);border-radius:10px;font-size:13px;font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);outline:none;cursor:pointer;">
+          <option value="">— Select a reference genome —</option>
           {% for group, dbs in databases_grouped.items %}
           <optgroup label="{{ group }}">
             {% for db in dbs %}
@@ -293,7 +297,8 @@
         </div>
 
         <label class="field-label">Parent 1 (Wild type) <span id="kasp-autosplit-msg" style="color:var(--green);font-size:11px;font-weight:400;display:none;">✓ Second sequence auto-detected and placed in Parent 2 below</span></label>
-        <textarea id="kasp-seq1" placeholder=">Parent1&#10;ATGCATGCATGC...&#10;&#10;You can also paste BOTH sequences here as a multi-FASTA and they will be split automatically." style="width:100%;height:90px;padding:10px;border:1.5px solid var(--border);border-radius:10px;font-family:'DM Mono',monospace;font-size:12px;resize:vertical;" onpaste="setTimeout(kaspAutoSplitMultiFasta, 30)" oninput="kaspAutoSplitMultiFasta()"></textarea>
+        <textarea id="kasp-seq1" placeholder=">Parent1&#10;ATGCATGCATGC...&#10;&#10;You can also paste BOTH sequences here as a multi-FASTA and they will be split automatically." style="width:100%;height:90px;padding:10px;border:1.5px solid var(--border);border-radius:10px;font-family:'DM Mono',monospace;font-size:12px;resize:vertical;" onpaste="setTimeout(kaspAutoSplitMultiFasta, 30)" oninput="kaspAutoSplitMultiFasta();updateBpCounter('kasp-seq1','kasp1-bp-counter')"></textarea>
+        <div id="kasp1-bp-counter" style="text-align:right;font-size:11px;color:rgba(15,26,15,0.4);margin-top:3px;min-height:16px;"></div>
         <input type="file" id="file-kasp1" accept=".fas,.fasta,.fa,.txt" style="display:none" onchange="handleKaspFile(this,'kasp-seq1','upload-kasp1-btn','kasp1-preview')">
         <div style="display:flex;gap:8px;margin-top:6px;align-items:center;">
           <button type="button" class="upload-btn" id="upload-kasp1-btn"
@@ -306,7 +311,8 @@
         </div>
 
         <label class="field-label" style="margin-top:14px;">Parent 2 (Mutant)</label>
-        <textarea id="kasp-seq2" placeholder=">Parent2&#10;ATGCATGTATGC..." style="width:100%;height:90px;padding:10px;border:1.5px solid var(--border);border-radius:10px;font-family:'DM Mono',monospace;font-size:12px;resize:vertical;"></textarea>
+        <textarea id="kasp-seq2" placeholder=">Parent2&#10;ATGCATGTATGC..." style="width:100%;height:90px;padding:10px;border:1.5px solid var(--border);border-radius:10px;font-family:'DM Mono',monospace;font-size:12px;resize:vertical;" oninput="updateBpCounter('kasp-seq2','kasp2-bp-counter')"></textarea>
+        <div id="kasp2-bp-counter" style="text-align:right;font-size:11px;color:rgba(15,26,15,0.4);margin-top:3px;min-height:16px;"></div>
         <input type="file" id="file-kasp2" accept=".fas,.fasta,.fa,.txt" style="display:none" onchange="handleKaspFile(this,'kasp-seq2','upload-kasp2-btn','kasp2-preview')">
         <div style="display:flex;gap:8px;margin-top:6px;align-items:center;">
           <button type="button" class="upload-btn" id="upload-kasp2-btn"
@@ -335,7 +341,7 @@
 
           <label class="field-label">Reference genome <span style="color:var(--muted);font-weight:400;">(enables specificity check &amp; chromosomal locations)</span></label>
           <select id="kasp-database" style="width:100%;padding:10px 12px;border:1.5px solid var(--border);border-radius:10px;font-size:13px;font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);outline:none;cursor:pointer;">
-            <option value="">— Select a genome —</option>
+            <option value="">— Select a reference genome —</option>
             {% for group, dbs in databases_grouped.items %}
             <optgroup label="{{ group }}">
               {% for db in dbs %}
@@ -528,7 +534,7 @@
 
 <script>
 // ── State ──────────────────────────────────────────────────────────
-let currentMode    = 'direct';
+let currentMode    = 'blast';
 let allSubgenomes  = [];
 let directFiles    = [];
 
@@ -732,10 +738,73 @@ function handleDirectFiles(input) {
       if (done === directFiles.length) {
         const combined = readers.filter(Boolean).join('\n');
         showPreview(parseFasta(combined));
+        checkDirectSeqLength();
       }
     };
     reader.readAsText(file);
   });
+}
+
+// ── FASTA normalizer ───────────────────────────────────────────────
+// Strips 60-char line breaks from sequence lines and auto-adds a
+// >sequence header if the user forgot to include one.
+function normalizeFasta(text) {
+  text = text.trim();
+  if (!text) return text;
+
+  // If no header present, add one
+  if (!text.startsWith('>')) {
+    text = '>sequence\n' + text;
+  }
+
+  // Strip line breaks within sequence blocks (keep header lines intact)
+  const lines = text.split('\n');
+  const out = [];
+  let seqBuf = '';
+  for (const line of lines) {
+    if (line.startsWith('>')) {
+      if (seqBuf) { out.push(seqBuf); seqBuf = ''; }
+      out.push(line);
+    } else {
+      seqBuf += line.trim();
+    }
+  }
+  if (seqBuf) out.push(seqBuf);
+  return out.join('\n');
+}
+
+function normalizeBlastSeq() {
+  const ta = document.getElementById('seq-blast');
+  if (!ta) return;
+  ta.value = normalizeFasta(ta.value);
+  updateBpCounter('seq-blast', 'blast-bp-counter');
+}
+
+function updateBpCounter(textareaId, counterId) {
+  const ta = document.getElementById(textareaId);
+  const el = document.getElementById(counterId);
+  if (!ta || !el) return;
+  const bp = (ta.value.replace(/^>.*$/gm, '').replace(/\s/g, '').match(/[ACGTNacgtn]/g) || []).length;
+  if (bp > 10000) {
+    el.innerHTML = bp.toLocaleString() + ' bp &nbsp;<span style="color:#b45309;background:#fef3c7;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:600;">⚠ Sequences &gt;10,000 bp may be slow or time out — consider a shorter region around your SNP.</span>';
+  } else {
+    el.textContent = bp > 0 ? bp.toLocaleString() + ' bp' : '';
+  }
+}
+
+function checkDirectSeqLength() {
+  const ta = document.getElementById('seq-direct');
+  const el = document.getElementById('direct-len-warning');
+  if (!ta || !el) return;
+  const blocks = ta.value.split(/(?=^>)/m).filter(s => s.trim());
+  const maxBp = blocks.length ? Math.max(...blocks.map(b =>
+    (b.replace(/^>.*$/m, '').replace(/\s/g, '').match(/[ACGTNacgtn]/g) || []).length
+  )) : 0;
+  if (maxBp > 10000) {
+    el.innerHTML = '<span style="color:#b45309;background:#fef3c7;padding:3px 10px;border-radius:5px;font-size:11px;font-weight:500;">⚠ One or more sequences exceed 10,000 bp. Alignment may be slow or time out — consider a shorter region around your SNP.</span>';
+  } else {
+    el.textContent = '';
+  }
 }
 
 function handleBlastFile(input) {
@@ -746,7 +815,9 @@ function handleBlastFile(input) {
   btn.classList.add('has-file');
   const reader = new FileReader();
   reader.onload = e => {
-    document.getElementById('seq-blast').value = e.target.result;
+    const ta = document.getElementById('seq-blast');
+    ta.value = normalizeFasta(e.target.result);
+    updateBpCounter('seq-blast', 'blast-bp-counter');
   };
   reader.readAsText(file);
 }
@@ -844,6 +915,7 @@ document.getElementById('seq-direct').addEventListener('input', function() {
 function resetAll() {
   _stopPolling();
   _hideProgressPanel();
+  _clearJob();
 
   // Re-enable submit button (may have been left disabled if BLAST was running)
   const _submitBtn = document.getElementById('submit-btn');
@@ -988,6 +1060,8 @@ async function _pollProgress(jobId, runMode) {
 
     // Done — show results
     document.getElementById('status').className = '';
+    _clearJob();
+    notifyResultsReady(runMode === 'kasp' ? 'KASP primer design' : 'BLAST + primer design');
     if (runMode === 'kasp') {
       displayKASPResults(d);
     } else {
@@ -1004,10 +1078,183 @@ async function _pollProgress(jobId, runMode) {
   }
 }
 
+// ── Job persistence (localStorage) ────────────────────────────────
+const _JOB_KEY = 'gsp_pending_job';
+
+function _saveJob(jobId, runMode) {
+  try {
+    localStorage.setItem(_JOB_KEY, JSON.stringify({
+      jobId, runMode, savedAt: Date.now()
+    }));
+  } catch(e) {}
+}
+
+function _clearJob() {
+  try { localStorage.removeItem(_JOB_KEY); } catch(e) {}
+}
+
+function _showResumeJobBanner(message, onView) {
+  let banner = document.getElementById('gsp-resume-banner');
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.id = 'gsp-resume-banner';
+    // Bottom-right toast — clear of the green header
+    banner.style.cssText = [
+      'position:fixed',
+      'bottom:24px',
+      'left:24px',
+      'z-index:9999',
+      'background:#fff',
+      'color:#0f1a0f',
+      'border:1.5px solid #52b788',
+      'border-left:4px solid #1a6e3c',
+      'padding:14px 16px',
+      'border-radius:12px',
+      'font-size:13px',
+      'font-family:\'DM Sans\',sans-serif',
+      'display:flex',
+      'flex-direction:column',
+      'gap:10px',
+      'min-width:260px',
+      'max-width:320px',
+      'box-shadow:0 4px 20px rgba(0,0,0,0.12)',
+      'animation:gsp-toast-in .25s ease',
+    ].join(';');
+    // Slide-in keyframe (injected once)
+    if (!document.getElementById('gsp-toast-style')) {
+      const s = document.createElement('style');
+      s.id = 'gsp-toast-style';
+      s.textContent = '@keyframes gsp-toast-in{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}';
+      document.head.appendChild(s);
+    }
+    document.body.appendChild(banner);
+  }
+  banner.innerHTML = '';
+  // Top row: icon + message + close
+  const topRow = document.createElement('div');
+  topRow.style.cssText = 'display:flex;align-items:flex-start;gap:8px;';
+  const icon = document.createElement('span');
+  icon.textContent = onView ? '✓' : '⟳';
+  icon.style.cssText = 'font-size:15px;color:#1a6e3c;flex-shrink:0;margin-top:1px;';
+  const txt = document.createElement('span');
+  txt.textContent = message;
+  txt.style.cssText = 'flex:1;line-height:1.5;';
+  const close = document.createElement('button');
+  close.textContent = '✕';
+  close.style.cssText = 'background:none;border:none;color:rgba(15,26,15,0.3);cursor:pointer;font-size:13px;padding:0;flex-shrink:0;';
+  close.onmouseover = function() { this.style.color = 'rgba(15,26,15,0.7)'; };
+  close.onmouseout  = function() { this.style.color = 'rgba(15,26,15,0.3)'; };
+  close.onclick = function() { _clearJob(); banner.remove(); };
+  topRow.appendChild(icon);
+  topRow.appendChild(txt);
+  topRow.appendChild(close);
+  banner.appendChild(topRow);
+  // View results button (only when results are ready)
+  if (onView) {
+    const btn = document.createElement('button');
+    btn.textContent = 'View results →';
+    btn.style.cssText = 'background:#1a6e3c;border:none;color:#fff;padding:7px 14px;border-radius:8px;cursor:pointer;font-size:12px;font-weight:600;width:100%;text-align:center;';
+    btn.onmouseover = function() { this.style.background = '#155a30'; };
+    btn.onmouseout  = function() { this.style.background = '#1a6e3c'; };
+    btn.onclick = function() { banner.remove(); onView(); };
+    banner.appendChild(btn);
+  }
+  // Auto-dismiss after 90s
+  setTimeout(() => { if (banner.parentNode) banner.remove(); }, 90000);
+}
+
+function _resumeJob() {
+  try {
+    const raw = localStorage.getItem(_JOB_KEY);
+    if (!raw) return;
+    const saved = JSON.parse(raw);
+    if (!saved.jobId) { _clearJob(); return; }
+    const ageHours = (Date.now() - saved.savedAt) / 3600000;
+    if (ageHours > 23) { _clearJob(); return; }
+
+    // Ask the server what state the job is in
+    fetch('/progress/' + saved.jobId + '/')
+      .then(r => r.json())
+      .then(d => {
+        if (d.status === 'running') {
+          // Job still running — restore progress panel and resume polling
+          const steps = d.steps || [];
+          _showProgressPanel(steps);
+          _updateProgressPanel(d.step, d.step_name, d.detail, d.elapsed, steps.length || 8);
+          document.getElementById('submit-btn').disabled = true;
+          _pollTimer = setInterval(() => _pollProgress(saved.jobId, saved.runMode), 2000);
+          _showResumeJobBanner('Your job is still running — reconnected.');
+        } else if (d.status === undefined && !d.error) {
+          // Done — result is inline in d
+          const mins = Math.round((Date.now() - saved.savedAt) / 60000);
+          const label = mins < 2 ? 'just now' : mins + ' minute' + (mins === 1 ? '' : 's') + ' ago';
+          _showResumeJobBanner('Results from ' + label + ' are ready.', function() {
+            _clearJob();
+            notifyResultsReady(saved.runMode === 'kasp' ? 'KASP primer design' : 'BLAST + primer design');
+            if (saved.runMode === 'kasp') {
+              displayKASPResults(d);
+            } else {
+              d._runMode = saved.runMode;
+              showResults(d);
+            }
+          });
+        } else {
+          // Error or not found — clear silently
+          _clearJob();
+        }
+      })
+      .catch(() => { /* server not reachable yet, ignore */ });
+  } catch(e) {}
+}
+
+// ── Results notification (sound + browser alert) ───────────────────
+function notifyResultsReady(label) {
+  // Sound: short two-tone beep using the pre-unlocked AudioContext
+  try {
+    var ctx = window._gspAudioCtx;
+    if (ctx && ctx.state !== 'closed') {
+      ctx.resume().then(function() {
+        [0, 0.18].forEach(function(t, i) {
+          var osc = ctx.createOscillator();
+          var gain = ctx.createGain();
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(i === 0 ? 660 : 880, ctx.currentTime + t);
+          gain.gain.setValueAtTime(0.25, ctx.currentTime + t);
+          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + t + 0.22);
+          osc.start(ctx.currentTime + t);
+          osc.stop(ctx.currentTime + t + 0.22);
+        });
+      }).catch(function(){});
+    }
+  } catch(e) {}
+  // Browser notification
+  if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+    try {
+      new Notification('GSP — Results ready ✓', {
+        body: (label || 'Primer design') + ' complete. Switch back to view your results.',
+        tag: 'gsp-results'
+      });
+    } catch(e) {}
+  }
+}
+
 // ── Run pipeline ───────────────────────────────────────────────────
 async function runPipeline() {
   const btn = document.getElementById('submit-btn');
   btn.disabled = true;
+  // Request browser notification permission on first run (requires user gesture)
+  if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+    Notification.requestPermission().catch(function(){});
+  }
+  // Pre-create and unlock AudioContext during user gesture so sound works when results arrive
+  try {
+    if (!window._gspAudioCtx || window._gspAudioCtx.state === 'closed') {
+      window._gspAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    window._gspAudioCtx.resume().catch(function(){});
+  } catch(e) {}
   document.getElementById('results').style.display = 'none';
   _hideProgressPanel();
   _stopPolling();
@@ -1063,6 +1310,7 @@ async function runPipeline() {
       const steps = data.steps || [];
       _showProgressPanel(steps);
       _updateProgressPanel(1, steps[0] ? steps[0][1] : 'Starting…', '', 0, steps.length || 8);
+      _saveJob(data.job_id, runMode);
       _pollTimer = setInterval(() => _pollProgress(data.job_id, runMode), 2000);
       return; // btn stays disabled until polling resolves
     }
@@ -1075,6 +1323,7 @@ async function runPipeline() {
       return;
     }
     document.getElementById('status').className = '';
+    notifyResultsReady('BLAST + primer design');
     showResults(data);
   } catch(e) {
     showStatus('Network error: ' + e.message, 'error');
@@ -1273,7 +1522,7 @@ function buildSubgenomeTabs(subgenomes, mode) {
         <td><span class="${dc >= 8 ? 'diff-high' : 'diff-low'}">${p.left_diff}L + ${p.right_diff}R</span></td>
 
         <td class="loc-cell" style="font-size:11px;min-width:180px;"><span style="color:rgba(15,26,15,0.4);font-size:10px;display:flex;align-items:center;gap:4px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="animation:spin 1s linear infinite;flex-shrink:0;"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg> Loading...</span></td>
-        <td><span class="score-num">${p.score}</span>${window._blastDbName ? '<br>' + getSpecificityBadge(p) : ''}${p.off_target_amplicon ? '<br><span title="This pair may amplify an off-target locus" style="font-size:10px;color:#c0392b;font-weight:600;background:rgba(192,57,43,0.08);padding:1px 6px;border-radius:4px;">⚠ off-target amplicon</span>' : ''}</td>
+        <td><span class="score-num">${p.score}</span>${p.off_target_amplicon ? '<br><span title="This pair may amplify an off-target locus" style="font-size:10px;color:#c0392b;font-weight:600;background:rgba(192,57,43,0.08);padding:1px 6px;border-radius:4px;">⚠ off-target amplicon</span>' : ''}</td>
       </tr>`;
     };
 
@@ -1369,7 +1618,7 @@ function showResults(data) {
   //   BLAST mode with db → genome-specific primers ranked first
   //   Direct (Tab 1) → MSA 3'-end discriminating primers ranked first
   const _subtitle = data.db_name
-    ? `Showing top 10 of ${data.total_pairs} pairs · Genome-specific primers shown first`
+    ? `Showing ${data.top_pairs.length} genome-specific primer pairs`
     : `${data.total_pairs} pairs found · MSA 3′-end discriminating primers ranked first`;
   document.getElementById('results-subtitle').textContent = _subtitle;
   document.getElementById('download-link').href = '/download/' + data.job_id + '/';
@@ -1425,7 +1674,7 @@ function showResults(data) {
       var toast = document.createElement('div');
       toast.id = 'chrom-loading-note';
       toast.style.cssText = 'position:fixed;top:20px;left:50%;transform:translateX(-50%);z-index:9999;display:flex;align-items:center;gap:10px;padding:10px 20px;background:#1a6e3c;color:#fff;border-radius:30px;font-size:13px;font-weight:600;box-shadow:0 4px 20px rgba(26,110,60,0.4);';
-      toast.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="animation:spin 1s linear infinite;flex-shrink:0;"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg> Fetching chromosomal locations for top 10 pairs…';
+      toast.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="animation:spin 1s linear infinite;flex-shrink:0;"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg> Fetching chromosomal locations for top 20 pairs…';
       document.body.appendChild(toast);
       prefetchTopLocations(allSubgenomes, function() {
         var noteEl = document.getElementById('chrom-loading-note');
@@ -1936,7 +2185,7 @@ function thermoCard(label, data) {
   if (!data || data.dg === null) return `
     <div style="border-radius:8px;padding:10px 12px;border:1px solid rgba(15,26,15,0.08);background:rgba(15,26,15,0.02);">
       <div style="font-size:10px;color:rgba(15,26,15,0.4);margin-bottom:4px;">${label}</div>
-      <div style="font-size:12px;color:rgba(15,26,15,0.3);">N/A</div>
+      <div style="font-size:12px;color:rgba(15,26,15,0.3);">None detected</div>
     </div>`;
 
   const dg = data.dg;
@@ -2074,7 +2323,7 @@ function openCardModal(pJson) {
       " style="flex:1;padding:10px;background:var(--green);color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif;">
         View in alignment viewer
       </button>` : ''}
-      <button onclick="closeCardModal()" style="padding:10px 20px;background:none;border:1px solid var(--border);border-radius:8px;font-size:13px;cursor:pointer;font-family:'DM Sans',sans-serif;">
+      <button onclick="closeCardModal()" style="padding:10px 20px;background:none;border:2px solid var(--green);border-radius:8px;font-size:13px;font-weight:600;color:var(--green);cursor:pointer;font-family:'DM Sans',sans-serif;${window._msaData ? '' : 'flex:1;'}">
         Close
       </button>
     </div>`;
@@ -2227,15 +2476,32 @@ function downloadSelected(format) {
 
   if (format === 'csv') {
     // Simple CSV download
+    function _csvRiskLabel(dg) {
+      if (dg === null || dg === undefined) return 'None detected';
+      const label = dg > -6 ? 'Low risk' : dg > -9 ? 'Moderate' : 'High risk';
+      return `"${dg} (${label})"`;
+    }
+    function _csvThermoSummary(dgVals) {
+      const nonNull = dgVals.filter(v => v !== null && v !== undefined);
+      const passed = nonNull.filter(v => v > -6).length;
+      return `${passed}/${nonNull.length}`;
+    }
     const headers = ['Rank','Sequence','Left primer','Left start','Left len','Left Tm','Left GC%',
       'Right primer','Right start','Right len','Right Tm','Right GC%',
-      'Product size','Unique sites L','Unique sites R','3end L','3end R','Score'];
+      'Product size','Off-target amplicon','Heterodimer dG','L Hairpin dG','R Hairpin dG','L Homodimer dG','R Homodimer dG','Thermo checks passed','Score'];
     let csv = headers.join(',') + '\n';
     pairs.forEach(p => {
+      const th = p.thermo || {};
+      const dgVals = [th.heterodimer?.dg ?? null, th.left_hairpin?.dg ?? null,
+                      th.right_hairpin?.dg ?? null, th.left_homodimer?.dg ?? null,
+                      th.right_homodimer?.dg ?? null];
       csv += [p.rank, p.seq_name, p.left_seq, p.left_start, p.left_len, p.left_tm, p.left_gc,
         p.right_seq, p.right_start, p.right_len, p.right_tm, p.right_gc,
-        p.product_size, p.left_diff, p.right_diff,
-        p.left_3end ? 'Y' : 'N', p.right_3end ? 'Y' : 'N', p.score].join(',') + '\n';
+        p.product_size, p.off_target_amplicon ? 'Yes' : 'No',
+        _csvRiskLabel(dgVals[0]), _csvRiskLabel(dgVals[1]), _csvRiskLabel(dgVals[2]),
+        _csvRiskLabel(dgVals[3]), _csvRiskLabel(dgVals[4]),
+        _csvThermoSummary(dgVals),
+        p.score].join(',') + '\n';
     });
     const blob = new Blob([csv], {type: 'text/csv'});
     const a = document.createElement('a');
@@ -2334,7 +2600,7 @@ function makeRowHtml(p) {
     <td><span class="${dc >= 8 ? 'diff-high' : 'diff-low'}">${p.left_diff}L + ${p.right_diff}R</span></td>
 
     <td class="loc-cell" style="font-size:11px;min-width:180px;"><span style="color:rgba(15,26,15,0.4);font-size:10px;display:flex;align-items:center;gap:4px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="animation:spin 1s linear infinite;flex-shrink:0;"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg> Loading...</span></td>
-    <td><span class="score-num">${p.score}</span>${window._blastDbName ? '<br>' + getSpecificityBadge(p) : ''}${p.off_target_amplicon ? '<br><span title="This pair may amplify an off-target locus" style="font-size:10px;color:#c0392b;font-weight:600;background:rgba(192,57,43,0.08);padding:1px 6px;border-radius:4px;">⚠ off-target amplicon</span>' : ''}</td>
+    <td><span class="score-num">${p.score}</span>${p.off_target_amplicon ? '<br><span title="This pair may amplify an off-target locus" style="font-size:10px;color:#c0392b;font-weight:600;background:rgba(192,57,43,0.08);padding:1px 6px;border-radius:4px;">⚠ off-target amplicon</span>' : ''}</td>
   </tr>`;
 }
 
@@ -2497,7 +2763,9 @@ function handleBlastFileDrop(files) {
   const file = files[0];
   const reader = new FileReader();
   reader.onload = e => {
-    document.getElementById('seq-blast').value = e.target.result;
+    const ta = document.getElementById('seq-blast');
+    ta.value = normalizeFasta(e.target.result);
+    updateBpCounter('seq-blast', 'blast-bp-counter');
     const btn = document.getElementById('upload-blast-btn');
     if (btn) { btn.textContent = '✓ ' + file.name; btn.classList.add('has-file'); }
   };
@@ -2506,6 +2774,7 @@ function handleBlastFileDrop(files) {
 
 function clearBlastFile() {
   document.getElementById('seq-blast').value = '';
+  updateBpCounter('seq-blast', 'blast-bp-counter');
   const inp = document.getElementById('file-blast');
   if (inp) inp.value = '';
   const btn = document.getElementById('upload-blast-btn');
@@ -2536,6 +2805,8 @@ function kaspAutoSplitMultiFasta() {
 
   ta1.value = part1;
   ta2.value = part2;
+  updateBpCounter('kasp-seq1', 'kasp1-bp-counter');
+  updateBpCounter('kasp-seq2', 'kasp2-bp-counter');
 
   // Visual feedback
   ta1.style.borderColor = 'var(--green)';
@@ -2553,6 +2824,8 @@ function clearKaspFile(textareaId, btnId, inputId) {
   const btn = document.getElementById(btnId);
   const inp = document.getElementById(inputId);
   if (ta) ta.value = '';
+  const counterId = textareaId === 'kasp-seq1' ? 'kasp1-bp-counter' : 'kasp2-bp-counter';
+  updateBpCounter(textareaId, counterId);
   if (inp) inp.value = '';
   if (btn) { 
     btn.classList.remove('has-file');
@@ -2566,8 +2839,10 @@ function handleKaspFile(input, textareaId, btnId, previewId) {
   const file = input.files[0];
   const reader = new FileReader();
   reader.onload = e => {
-    const text = e.target.result;
-    document.getElementById(textareaId).value = text;
+    const ta = document.getElementById(textareaId);
+    ta.value = normalizeFasta(e.target.result);
+    const counterId = textareaId === 'kasp-seq1' ? 'kasp1-bp-counter' : 'kasp2-bp-counter';
+    updateBpCounter(textareaId, counterId);
     const btn = document.getElementById(btnId);
     if (btn) { btn.textContent = '✓ ' + file.name; btn.classList.add('has-file'); }
   };
@@ -2579,8 +2854,10 @@ function handleKaspFileDrop(files, textareaId, btnId, previewId) {
   const file = files[0];
   const reader = new FileReader();
   reader.onload = e => {
-    const text = e.target.result;
-    document.getElementById(textareaId).value = text;
+    const ta = document.getElementById(textareaId);
+    ta.value = normalizeFasta(e.target.result);
+    const counterId = textareaId === 'kasp-seq1' ? 'kasp1-bp-counter' : 'kasp2-bp-counter';
+    updateBpCounter(textareaId, counterId);
     const btn = document.getElementById(btnId);
     if (btn) { btn.textContent = '✓ ' + file.name; btn.classList.add('has-file'); }
   };
@@ -2690,6 +2967,7 @@ function runKASP() {
       const steps = data.steps || [];
       _showProgressPanel(steps);
       _updateProgressPanel(1, steps[0] ? steps[0][1] : 'Starting…', '', 0, steps.length || 5);
+      _saveJob(data.job_id, runMode);
       _pollTimer = setInterval(() => _pollProgress(data.job_id, runMode), 2000);
       return;
     }
@@ -3302,7 +3580,7 @@ function openKaspCardModal(m) {
     })() +
     '<div style="display:flex;gap:10px;">' +
     '<button onclick="showKaspAlignment(window._kaspModalMarker,false);closeCardModal();" style="flex:1;padding:10px;background:var(--green);color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;">View in alignment viewer</button>' +
-    '<button onclick="closeCardModal()" style="padding:10px 20px;background:none;border:1px solid var(--border);border-radius:8px;font-size:13px;cursor:pointer;">Close</button>' +
+    '<button onclick="closeCardModal()" style="padding:10px 20px;background:none;border:2px solid var(--green);border-radius:8px;font-size:13px;font-weight:600;color:var(--green);cursor:pointer;">Close</button>' +
     '</div>';
   document.getElementById('card-modal').style.display = 'flex';
 }
@@ -3472,6 +3750,7 @@ function kaspDownloadSelected(fmt) {
 function closeCardModal() {
   document.getElementById('card-modal').style.display = 'none';
 }
+
 </script>
 
 <!-- ═══════════════════════════════════════════════════════════════════════
@@ -4446,7 +4725,7 @@ function closeCardModal() {
         </p>
         <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:18px">
           <div style="display:flex;gap:12px;align-items:flex-start"><div style="min-width:24px;height:24px;background:var(--accent);color:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0">1</div><div style="font-size:13px;color:var(--ink);line-height:1.6">Paste a <strong>single</strong> FASTA sequence (one entry only) into the query box.</div></div>
-          <div style="display:flex;gap:12px;align-items:flex-start"><div style="min-width:24px;height:24px;background:var(--accent);color:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0">2</div><div style="font-size:13px;color:var(--ink);line-height:1.6">Select a reference genome from the dropdown (e.g. Chinese Spring IWGSC RefSeq v2.1).</div></div>
+          <div style="display:flex;gap:12px;align-items:flex-start"><div style="min-width:24px;height:24px;background:var(--accent);color:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0">2</div><div style="font-size:13px;color:var(--ink);line-height:1.6">Select a reference genome from the dropdown — wheat (e.g. Chinese Spring IWGSC RefSeq v2.1), barley (e.g. Golden Promise), or rye (Lo7).</div></div>
           <div style="display:flex;gap:12px;align-items:flex-start"><div style="min-width:24px;height:24px;background:var(--accent);color:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0">3</div><div style="font-size:13px;color:var(--ink);line-height:1.6">Click <strong>Run BLAST + Design Primers</strong> — a live progress bar tracks the job. Large genomes (wheat ~14 GB) take 1–5 minutes.</div></div>
           <div style="display:flex;gap:12px;align-items:flex-start"><div style="min-width:24px;height:24px;background:var(--accent);color:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0">4</div><div style="font-size:13px;color:var(--ink);line-height:1.6">Results are grouped by chromosome. Primers marked <strong>3′-specific</strong> have their 3′ end verified genome-wide.</div></div>
           <div style="display:flex;gap:12px;align-items:flex-start"><div style="min-width:24px;height:24px;background:var(--accent);color:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0">5</div><div style="font-size:13px;color:var(--ink);line-height:1.6">Click <strong>Download Excel</strong> to get a multi-sheet workbook (one sheet per chromosome group).</div></div>
@@ -4488,7 +4767,7 @@ function closeCardModal() {
         </p>
         <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:18px">
           <div style="display:flex;gap:12px;align-items:flex-start"><div style="min-width:24px;height:24px;background:#1a6eb4;color:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0">1</div><div style="font-size:13px;color:var(--ink);line-height:1.6">Click the <strong>flask icon</strong> in the bottom-right corner to open the chat panel.</div></div>
-          <div style="display:flex;gap:12px;align-items:flex-start"><div style="min-width:24px;height:24px;background:#1a6eb4;color:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0">2</div><div style="font-size:13px;color:var(--ink);line-height:1.6">Type your request — e.g. <em style="color:rgba(15,26,15,0.5)">"I want primers for TaGW2 in the Jagger genome"</em></div></div>
+          <div style="display:flex;gap:12px;align-items:flex-start"><div style="min-width:24px;height:24px;background:#1a6eb4;color:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0">2</div><div style="font-size:13px;color:var(--ink);line-height:1.6">Type your request — e.g. <em style="color:rgba(15,26,15,0.5)">"I want primers for TaGW2 in the Jagger genome"</em> or <em style="color:rgba(15,26,15,0.5)">"find HvFT1 in Golden Promise"</em></div></div>
           <div style="display:flex;gap:12px;align-items:flex-start"><div style="min-width:24px;height:24px;background:#1a6eb4;color:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0">3</div><div style="font-size:13px;color:var(--ink);line-height:1.6">Click a gene in the table the chatbot returns — it extracts the genomic sequence automatically.</div></div>
           <div style="display:flex;gap:12px;align-items:flex-start"><div style="min-width:24px;height:24px;background:#1a6eb4;color:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0">4</div><div style="font-size:13px;color:var(--ink);line-height:1.6">Type <em style="color:rgba(15,26,15,0.5)">"yes"</em> to confirm — primer design launches in Tab 2 automatically.</div></div>
         </div>
@@ -4550,7 +4829,7 @@ function closeCardModal() {
             <div style="font-weight:700;font-size:13px;margin-bottom:10px">💡 Tips</div>
             <div style="display:flex;flex-direction:column;gap:8px;font-size:12.5px;line-height:1.5;opacity:0.92">
               <div>Use <strong>genomic sequences</strong> (with introns) — more unique positions than exons.</div>
-              <div>For wheat, provide A, B and D copies in Tab 1 for best discrimination.</div>
+              <div>For wheat, provide A, B and D copies in Tab 1 for best discrimination. For barley and rye (diploid), use Tab 2 directly.</div>
               <div>In Tab 3, SNP positions are <strong>1-based</strong>. Sequences can differ in length.</div>
             </div>
           </div>
@@ -4599,6 +4878,10 @@ function closeHelp() {
   document.getElementById('help-modal').style.display = 'none';
   document.body.style.overflow = '';
 }
+window.addEventListener('load', () => {
+  // Check for a job that was running when the user navigated away
+  _resumeJob();
+});
 window.addEventListener('load', () => {
   var seen  = localStorage.getItem('gsp-help-seen');
   var btn   = document.getElementById('help-btn');

@@ -139,17 +139,21 @@ MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 
 # ── GSP tool paths ─────────────────────────────────────────────────────────
-# Defaults work on macOS (Homebrew). In Docker, env vars point to Linux paths.
+# Defaults point to the bundled binaries in GSP/bin/ and GSP/gsp_web/ncbi-blast-*/bin/
+# Override any of these with environment variables (or via .env file).
+_BIN_DIR        = os.path.join(BASE_DIR, '..', 'bin')
+_BLAST_BIN_DIR  = os.path.join(BASE_DIR, 'ncbi-blast-2.16.0+', 'bin')
 GSP_PYTHON_DIR  = os.path.join(BASE_DIR, '..', 'gsp_python')
-MUSCLE_PATH     = os.environ.get('GSP_MUSCLE_PATH',     '/great/home/pksharma/muscle-linux-x86.v5.3')
-PRIMER3_PATH    = os.environ.get('GSP_PRIMER3_PATH',    '/great/home/pksharma/primer3/src/primer3_core')
-BLASTDBCMD_PATH = os.environ.get('GSP_BLASTDBCMD_PATH', '/usr/bin/blastdbcmd')
-BLASTN_PATH     = os.environ.get('GSP_BLASTN_PATH',     '/usr/bin/blastn')
+MUSCLE_PATH     = os.environ.get('GSP_MUSCLE_PATH',     os.path.join(_BIN_DIR, 'muscle5'))
+PRIMER3_PATH    = os.environ.get('GSP_PRIMER3_PATH',    os.path.join(_BIN_DIR, 'primer3_core'))
+NTTHAL_PATH     = os.environ.get('GSP_NTTHAL_PATH',     os.path.join(_BIN_DIR, 'ntthal'))
+BLASTDBCMD_PATH = os.environ.get('GSP_BLASTDBCMD_PATH', os.path.join(_BLAST_BIN_DIR, 'blastdbcmd'))
+BLASTN_PATH     = os.environ.get('GSP_BLASTN_PATH',     os.path.join(_BLAST_BIN_DIR, 'blastn'))
 
 # ── BLAST database root ────────────────────────────────────────────────────
-# On macOS: defaults to ../blast_db/ (relative to manage.py)
-# In Docker: set GSP_BLAST_DB_ROOT=/blast_db (mounted volume)
-_DB_ROOT = os.environ.get('GSP_BLAST_DB_ROOT', '/great/bioshare/genomes/')
+# Defaults to GSP/blast_db/ (bundled with the repo).
+# In Docker/server: set GSP_BLAST_DB_ROOT to the mounted volume path.
+_DB_ROOT = os.environ.get('GSP_BLAST_DB_ROOT', os.path.join(BASE_DIR, '..', 'blast_db'))
 
 # ── GFF annotation directory ───────────────────────────────────────────────
 # Contains bgzipped + tabix-indexed .gff3.gz files for each genome
@@ -165,7 +169,7 @@ _GENOMES_ROOT = os.environ.get('GSP_GENOMES_ROOT', os.path.join(BASE_DIR, '..', 
 
 # BLAST databases: {display_name: path_to_db}
 BLAST_DATABASES_GROUPED = {
-    'Bread wheat (T. aestivum ABD)': [
+    '▸ Bread wheat (T. aestivum ABD)': [
         'Chinese Spring (IWGSC ref1 2018)',
         'Chinese Spring (IWGSC ref2 2021)',
         'Kariega (2022)',
@@ -181,15 +185,15 @@ BLAST_DATABASES_GROUPED = {
         'Spelta (2019)',
         'Stanley (2019)',
     ],
-    'Einkorn wheat (T. monococcum A)': [
+    '▸ Einkorn wheat (T. monococcum A)': [
         'T. monococcum TA299 (2022)',
         'T. monococcum TA10622 (2022)',
     ],
-    'Durum wheat (T. turgidum AB)': [
+    '▸ Durum wheat (T. turgidum AB)': [
         'Svevo durum (2019)',
         'Zavitan durum (2019)',
     ],
-    'Aegilops species': [
+    '▸ Aegilops species': [
         'Ae. tauschii AL8-78 (2017)',
         'Ae. tauschii 5.0 Luo (2021)',
         'Ae. tauschii AY17 (2021)',
@@ -199,6 +203,31 @@ BLAST_DATABASES_GROUPED = {
         'Ae. longissima Sd (2022)',
         'Ae. speltoides Sb (2022)',
         'Ae. sharonensis Sd (2022)',
+    ],
+    '▸ Barley (H. vulgare)': [
+        'Akashinriki (barley)',
+        'B1K-04-12 (barley)',
+        'Barke (barley)',
+        'Golden Promise (barley)',
+        'HOR10350 (barley)',
+        'HOR13821 (barley)',
+        'HOR13942 (barley)',
+        'HOR21599 (barley)',
+        'HOR3081 (barley)',
+        'HOR3365 (barley)',
+        'HOR7552 (barley)',
+        'HOR8148 (barley)',
+        'HOR9043 (barley)',
+        'Hockett (barley)',
+        'Igri (barley)',
+        'Morex v3 (barley)',
+        'OUN333 (barley)',
+        'RGT Planet (barley)',
+        'ZDM01467 (barley)',
+        'ZDM02064 (barley)',
+    ],
+    '▸ Rye (S. cereale)': [
+        'Lo7 (rye 2018)',
     ],
 }
 
@@ -238,6 +267,29 @@ BLAST_DATABASES = {
     'Ae. longissima Sd (2022)':         _db('whe_Ael_S_Ae-longissima-Sd-Avni_2022'),
     'Ae. speltoides Sb (2022)':         _db('whe_Aes_B_Ae-speltoides-Sb-Avni_2022'),
     'Ae. sharonensis Sd (2022)':        _db('whe_Aes_S_Ae-sharonensis-Sd-Avni_2022'),
+    # Barley (H. vulgare — diploid)
+    'Akashinriki (barley)':             _db('Barley_db/Akashinriki/bar_Hv_Akashinriki'),
+    'B1K-04-12 (barley)':               _db('Barley_db/B1K-04-12/bar_Hv_B1K-04-12'),
+    'Barke (barley)':                   _db('Barley_db/Barke/bar_Hv_Barke'),
+    'Golden Promise (barley)':          _db('Barley_db/Golden_Promise/bar_Hv_Golden_Promise'),
+    'HOR10350 (barley)':                _db('Barley_db/HOR10350/bar_Hv_HOR10350'),
+    'HOR13821 (barley)':                _db('Barley_db/HOR13821/bar_Hv_HOR13821'),
+    'HOR13942 (barley)':                _db('Barley_db/HOR13942/bar_Hv_HOR13942'),
+    'HOR21599 (barley)':                _db('Barley_db/HOR21599/bar_Hv_HOR21599'),
+    'HOR3081 (barley)':                 _db('Barley_db/HOR3081/bar_Hv_HOR3081'),
+    'HOR3365 (barley)':                 _db('Barley_db/HOR3365/bar_Hv_HOR3365'),
+    'HOR7552 (barley)':                 _db('Barley_db/HOR7552/bar_Hv_HOR7552'),
+    'HOR8148 (barley)':                 _db('Barley_db/HOR8148/bar_Hv_HOR8148'),
+    'HOR9043 (barley)':                 _db('Barley_db/HOR9043/bar_Hv_HOR9043'),
+    'Hockett (barley)':                 _db('Barley_db/Hockett/bar_Hv_Hockett'),
+    'Igri (barley)':                    _db('Barley_db/Igri/bar_Hv_Igri'),
+    'Morex v3 (barley)':                _db('Barley_db/Morex/bar_Hv_Morex_v3'),
+    'OUN333 (barley)':                  _db('Barley_db/OUN333/bar_Hv_OUN333'),
+    'RGT Planet (barley)':              _db('Barley_db/RGT_Planet/bar_Hv_RGT_Planet'),
+    'ZDM01467 (barley)':                _db('Barley_db/ZDM01467/bar_Hv_ZDM01467'),
+    'ZDM02064 (barley)':                _db('Barley_db/ZDM02064/bar_Hv_ZDM02064'),
+    # Rye (S. cereale — diploid)
+    'Lo7 (rye 2018)':                   _db('Rye_db/Lo7/rye_Sc_Lo7_2018'),
 }
 
 # Ploidy / expected number of homeologous copies per database.
@@ -276,6 +328,29 @@ BLAST_DB_PLOIDY = {
     'Ae. longissima Sd (2022)':         2,
     'Ae. speltoides Sb (2022)':         2,
     'Ae. sharonensis Sd (2022)':        2,
+    # Barley (H. vulgare — diploid)
+    'Akashinriki (barley)':             1,
+    'B1K-04-12 (barley)':               1,
+    'Barke (barley)':                   1,
+    'Golden Promise (barley)':          1,
+    'HOR10350 (barley)':                1,
+    'HOR13821 (barley)':                1,
+    'HOR13942 (barley)':                1,
+    'HOR21599 (barley)':                1,
+    'HOR3081 (barley)':                 1,
+    'HOR3365 (barley)':                 1,
+    'HOR7552 (barley)':                 1,
+    'HOR8148 (barley)':                 1,
+    'HOR9043 (barley)':                 1,
+    'Hockett (barley)':                 1,
+    'Igri (barley)':                    1,
+    'Morex v3 (barley)':                1,
+    'OUN333 (barley)':                  1,
+    'RGT Planet (barley)':              1,
+    'ZDM01467 (barley)':                1,
+    'ZDM02064 (barley)':                1,
+    # Rye (S. cereale — diploid)
+    'Lo7 (rye 2018)':                   1,
 }
 
 def _genome(name):

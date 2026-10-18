@@ -6,30 +6,52 @@ import shutil
 import threading as _threading
 import subprocess
 import tempfile
+import json as _json
 from pathlib import Path
 import re as _re
 
-# ── Async job state ───────────────────────────────────────────────────────────
-# Stores progress and results for long-running BLAST pipeline jobs.
-# Dict is module-level; CPython GIL makes simple key writes atomic enough
-# for a local single-user server.  A lock guards the update helper anyway.
-_JOBS: dict = {}
-_JOBS_LOCK = _threading.Lock()
+# ── Async job state (file-based) ─────────────────────────────────────────────
+# Each job's state is stored in <MEDIA_ROOT>/jobs/<job_id>/status.json so that
+# any Gunicorn worker process can read or update it — no in-process dict needed.
+# Atomic writes use a tmp file + os.replace() so readers never see partial JSON.
 
 _JOB_TTL_SECONDS = 24 * 60 * 60  # 24 hours
 
+def _job_dir(job_id: str) -> 'Path':
+    return Path(settings.MEDIA_ROOT) / 'jobs' / job_id
+
+def _read_job(job_id: str) -> 'dict | None':
+    """Read job status from disk. Returns None if not found or unreadable."""
+    try:
+        return _json.loads((_job_dir(job_id) / 'status.json').read_text())
+    except Exception:
+        return None
+
+def _write_job(job_id: str, data: dict) -> None:
+    """Atomically write job status to disk (tmp + rename)."""
+    d = _job_dir(job_id)
+    d.mkdir(parents=True, exist_ok=True)
+    tmp = d / 'status.tmp'
+    tmp.write_text(_json.dumps(data))
+    tmp.replace(d / 'status.json')
+
+def _update_job(job_id: str, **kwargs) -> None:
+    """Read-modify-write job status. Safe: one writer thread per job."""
+    job = _read_job(job_id) or {}
+    job.update(kwargs)
+    _write_job(job_id, job)
+
 def _cleanup_old_jobs():
-    """Remove jobs older than TTL from memory and delete their disk folders.
-    Called lazily on each job_progress poll — no extra threads needed."""
+    """Delete job folders older than TTL. Called lazily on each progress poll."""
+    jobs_root = Path(settings.MEDIA_ROOT) / 'jobs'
+    if not jobs_root.exists():
+        return
     now = time.time()
-    expired = [
-        jid for jid, j in _JOBS.items()
-        if now - j.get('started_at', now) > _JOB_TTL_SECONDS
-    ]
-    for jid in expired:
-        _JOBS.pop(jid, None)
-        job_dir = Path(settings.MEDIA_ROOT) / 'jobs' / jid
-        if job_dir.exists():
+    for job_dir in jobs_root.iterdir():
+        if not job_dir.is_dir():
+            continue
+        job = _read_job(job_dir.name)
+        if job and now - job.get('started_at', now) > _JOB_TTL_SECONDS:
             shutil.rmtree(job_dir, ignore_errors=True)
 
 BLAST_STEPS = [
@@ -55,32 +77,20 @@ KASP_STEPS = [
 def _progress(job_id: str, step: int, detail: str = '') -> None:
     """Update progress for a running job.  Called from background thread."""
     step_name = next((n for s, n in BLAST_STEPS if s == step), f'Step {step}')
-    with _JOBS_LOCK:
-        if job_id in _JOBS:
-            _JOBS[job_id].update({
-                'step':      step,
-                'step_name': step_name,
-                'detail':    detail,
-            })
+    _update_job(job_id, step=step, step_name=step_name, detail=detail)
 
 def _kasp_progress(job_id: str, step: int, detail: str = '') -> None:
     """Update progress for a running KASP job.  Called from background thread."""
     step_name = next((n for s, n in KASP_STEPS if s == step), f'Step {step}')
-    with _JOBS_LOCK:
-        if job_id in _JOBS:
-            _JOBS[job_id].update({
-                'step':      step,
-                'step_name': step_name,
-                'detail':    detail,
-            })
+    _update_job(job_id, step=step, step_name=step_name, detail=detail)
 
 def _kasp_detail(job_id: str, detail: str) -> None:
     """Update only the detail text for a KASP job without advancing the step number."""
-    with _JOBS_LOCK:
-        if job_id in _JOBS:
-            _JOBS[job_id]['detail'] = detail
+    _update_job(job_id, detail=detail)
 
-def calc_thermo(seq1, seq2=None, mode='END1', ntthal_bin='/opt/homebrew/bin/ntthal'):
+def calc_thermo(seq1, seq2=None, mode='END1', ntthal_bin=None):
+    if ntthal_bin is None:
+        ntthal_bin = getattr(settings, 'NTTHAL_PATH', '/opt/homebrew/bin/ntthal')
     import subprocess
     cmd = [ntthal_bin, '-a', mode, '-s1', seq1]
     if seq2:
@@ -95,6 +105,29 @@ def calc_thermo(seq1, seq2=None, mode='END1', ntthal_bin='/opt/homebrew/bin/ntth
         return {'dg': dg_val, 'tm': tm_val}
     except:
         return {'dg': None, 'tm': None}
+
+def _thermo_risk_label(dg):
+    """Return dG value with risk label e.g. '-7.2 (Moderate)'. Returns 'None detected' if dg is None."""
+    if dg is None:
+        return 'None detected'
+    label = 'Low risk' if dg > -6 else ('Moderate' if dg > -9 else 'High risk ⚠')
+    return f'{dg} ({label})'
+
+def _thermo_summary(dg_values):
+    """Return 'X/Y' checks-passed string from a list of dG values (None allowed)."""
+    non_none = [v for v in dg_values if v is not None]
+    passed = sum(1 for v in non_none if v > -6)
+    return f'{passed}/{len(non_none)}'
+
+def _autofit_xlsx(wb, padding=2, max_width=60):
+    """Set each column width to its longest cell value to avoid overlap."""
+    for ws in wb.worksheets:
+        for col in ws.columns:
+            max_len = max(
+                (len(str(cell.value)) for cell in col if cell.value is not None),
+                default=8
+            )
+            ws.column_dimensions[col[0].column_letter].width = min(max_len + padding, max_width)
 
 from django.shortcuts import render
 from django.views.decorators.csrf import csrf_exempt
@@ -354,14 +387,10 @@ def _compute_uniqueness_map(seq: str, db_path: str) -> list:
 # ── Background BLAST pipeline ─────────────────────────────────────────────────
 
 def _set_job_error(job_id: str, msg: str) -> None:
-    with _JOBS_LOCK:
-        if job_id in _JOBS:
-            _JOBS[job_id].update({'status': 'error', 'error': msg})
+    _update_job(job_id, status='error', error=msg)
 
 def _set_job_done(job_id: str, result: dict) -> None:
-    with _JOBS_LOCK:
-        if job_id in _JOBS:
-            _JOBS[job_id].update({'status': 'done', 'result': result})
+    _update_job(job_id, status='done', result=result)
 
 
 def _run_blast_pipeline(job_id: str, workdir: Path,
@@ -369,8 +398,8 @@ def _run_blast_pipeline(job_id: str, workdir: Path,
                         amp_min: int, amp_max: int) -> None:
     """
     Long-running BLAST + primer design pipeline.
-    Runs in a background thread.  Updates _JOBS[job_id] with progress and
-    stores the final result (or error) there for the polling endpoint.
+    Runs in a background thread.  Writes progress and final result to
+    status.json in the job workdir for the polling endpoint.
     """
     import sys as _sys
     _sys.path.insert(0, str(Path(settings.GSP_PYTHON_DIR)))
@@ -458,7 +487,7 @@ def _run_blast_pipeline(job_id: str, workdir: Path,
         _n_use      = min(_n_detected, MAX_HOMEOLOGS)
         group       = _group_raw.select_top_n(_n_use)
 
-        _flank = amp_max + 200
+        _flank = 15
         _progress(job_id, 4,
                   f'Extracting {_n_use} homeolog sequence{"s" if _n_use > 1 else ""} '
                   f'({_n_detected} chromosomes hit)')
@@ -473,7 +502,13 @@ def _run_blast_pipeline(job_id: str, workdir: Path,
             _short_name_map = {h.split()[0]: s for h, s in _all_seqs_raw.items()}
 
         for chrom, hits in group.hits_by_chrom.items():
-            start, end = _calc_bed_coords(hits, _flank, 10**10)
+            # Use only the best (longest alignment) hit for coordinate
+            # calculation.  Secondary partial hits on the same chromosome can
+            # be thousands of bp away, inflating the extraction window to
+            # include intronic / unrelated sequence and producing primers that
+            # fall outside the user's pasted query.
+            best_hit = max(hits, key=lambda h: abs(h.send - h.sstart))
+            start, end = _calc_bed_coords([best_hit], _flank, 10**10)
             strand = hits[0].strand
             if use_fasta_fallback:
                 if chrom not in _short_name_map:
@@ -507,6 +542,7 @@ def _run_blast_pipeline(job_id: str, workdir: Path,
                 'PRIMER_MIN_GC': '35.0', 'PRIMER_MAX_GC': '65.0',
                 'PRIMER_MIN_TM': '50.0', 'PRIMER_OPT_TM': '60.0',
                 'PRIMER_MAX_TM': '65.0', 'PRIMER_PAIR_MAX_DIFF_TM': '2.0',
+                'PRIMER_MAX_POLY_X': '3',
                 'PRIMER_MIN_SIZE': '18',  'PRIMER_MAX_SIZE': '25',
             })
             _progress(job_id, 4, 'Single-copy gene — MSA alignment skipped')
@@ -519,7 +555,26 @@ def _run_blast_pipeline(job_id: str, workdir: Path,
                 settings=_sc_settings, blast_db=db_path,
                 blastn_path=settings.BLASTN_PATH, target_chroms=_tc,
                 require_3end_unique=True,
+                included_region=(15, max(1, len(_sc_seq) - 30)),
             )
+            # ── Query-sequence filter (single-copy mode) ──────────────────────
+            _sc_query_dna = ''.join(
+                l.strip().upper() for l in query_seq.split('\n')
+                if l.strip() and not l.startswith('>')
+            )
+            def _sc_primer_in_query(pair):
+                from primers import reverse_complement as _rc
+                return (pair.left_seq.upper() in _sc_query_dna and
+                        _rc(pair.right_seq).upper() in _sc_query_dna)
+            _sc_before = len(pairs)
+            pairs = [p for p in pairs if _sc_primer_in_query(p)]
+            if _sc_before - len(pairs):
+                import logging as _log
+                _log.getLogger(__name__).info(
+                    'Single-copy query-sequence filter removed %d pair(s) '
+                    'outside the pasted query', _sc_before - len(pairs)
+                )
+
             if not pairs:
                 _set_job_done(job_id, {
                     'success': True, 'mode': 'single_copy', 'db_name': db_name,
@@ -531,36 +586,75 @@ def _run_blast_pipeline(job_id: str, workdir: Path,
                     'warning': (
                         'No genome-specific primer pairs found for this region. '
                         'The sequence may be too conserved or repetitive for '
-                        'genome-specific primer design.'
+                        'genome-specific primer design. '
+                        'Try adjusting the amplicon size range.'
                     ),
                 })
                 return
+            # Cap to top 20 pairs before writing any output
+            pairs = pairs[:20]
+
             _progress(job_id, 8, f'Writing output ({len(pairs)} pairs)')
-            import openpyxl as _ox
+            import openpyxl as _ox, csv as _csv_mod
             xlsx_path = workdir / 'primers.xlsx'
             _wb = _ox.Workbook(); _wb.remove(_wb.active)
             _hdrs = ['Rank','Sequence','Left primer (5->3)','Left start','Left len',
                      'Left Tm','Left GC%','Right primer (5->3)','Right start','Right len',
-                     'Right Tm','Right GC%','Product size','Unique L','Unique R','3end L','3end R','Score']
+                     'Right Tm','Right GC%','Product size','Off-target amplicon',
+                     'Heterodimer dG','L Hairpin dG','R Hairpin dG',
+                     'L Homodimer dG','R Homodimer dG','Thermo checks passed','Score']
             _ws = _wb.create_sheet(title=_sc_chrom[:30]); _ws.append(_hdrs)
+            _csv_rows_sc = []
             for _rk, _p in enumerate(pairs, 1):
+                _th_sc = {
+                    'heterodimer':    calc_thermo(_p.left_seq, _p.right_seq, 'END1').get('dg'),
+                    'left_hairpin':   calc_thermo(_p.left_seq, mode='HAIRPIN').get('dg'),
+                    'right_hairpin':  calc_thermo(_p.right_seq, mode='HAIRPIN').get('dg'),
+                    'left_homodimer': calc_thermo(_p.left_seq, _p.left_seq, 'ANY').get('dg'),
+                    'right_homodimer':calc_thermo(_p.right_seq, _p.right_seq, 'ANY').get('dg'),
+                }
+                _ot_sc = 'Yes' if getattr(_p, 'off_target_amplicon', False) else 'No'
                 _ws.append([_rk, _p.seq_name, _p.left_seq, _p.left_start, _p.left_len,
                              float(_p.left_tm), float(_p.left_gc),
                              _p.right_seq, _p.right_start, _p.right_len,
                              float(_p.right_tm), float(_p.right_gc),
-                             _p.product_size, _p.left_diff_count, _p.right_diff_count,
-                             '✓' if _p.left_end_genome_specific else '',
-                             '✓' if _p.right_end_genome_specific else '',
+                             _p.product_size, _ot_sc,
+                             _thermo_risk_label(_th_sc['heterodimer']),
+                             _thermo_risk_label(_th_sc['left_hairpin']),
+                             _thermo_risk_label(_th_sc['right_hairpin']),
+                             _thermo_risk_label(_th_sc['left_homodimer']),
+                             _thermo_risk_label(_th_sc['right_homodimer']),
+                             _thermo_summary([_th_sc['heterodimer'], _th_sc['left_hairpin'],
+                                              _th_sc['right_hairpin'], _th_sc['left_homodimer'],
+                                              _th_sc['right_homodimer']]),
                              round(_p.score, 2)])
+                _csv_rows_sc.append([_rk, _p.seq_name, _p.left_seq, _p.left_start, _p.left_len,
+                                     float(_p.left_tm), float(_p.left_gc),
+                                     _p.right_seq, _p.right_start, _p.right_len,
+                                     float(_p.right_tm), float(_p.right_gc), _p.product_size, _ot_sc,
+                                     _thermo_risk_label(_th_sc['heterodimer']),
+                                     _thermo_risk_label(_th_sc['left_hairpin']),
+                                     _thermo_risk_label(_th_sc['right_hairpin']),
+                                     _thermo_risk_label(_th_sc['left_homodimer']),
+                                     _thermo_risk_label(_th_sc['right_homodimer']),
+                                     _thermo_summary([_th_sc['heterodimer'], _th_sc['left_hairpin'],
+                                                      _th_sc['right_hairpin'], _th_sc['left_homodimer'],
+                                                      _th_sc['right_homodimer']]),
+                                     round(_p.score, 2)])
+            _autofit_xlsx(_wb)
             _wb.save(str(xlsx_path))
 
-            # Build CSV for download
-            from output import write_csv as _wcsv
+            # Write CSV — same format as xlsx but without 3end columns
             _csv_path = workdir / 'primers.csv'
-            _wcsv(pairs, _sc_chrom, str(_csv_path))
-
-            # Cap to top 10 pairs
-            pairs = pairs[:10]
+            _csv_hdrs_sc = ['Rank','Sequence','Left primer (5->3)','Left start','Left len',
+                            'Left Tm','Left GC%','Right primer (5->3)','Right start','Right len',
+                            'Right Tm','Right GC%','Product size','Off-target amplicon',
+                            'Heterodimer dG','L Hairpin dG','R Hairpin dG',
+                            'L Homodimer dG','R Homodimer dG','Thermo checks passed','Score']
+            with open(str(_csv_path), 'w', newline='') as _cf:
+                _cw = _csv_mod.writer(_cf)
+                _cw.writerow(_csv_hdrs_sc)
+                _cw.writerows(_csv_rows_sc)
 
             # Build subgenomes + top_pairs in the SAME format as MSA mode so the
             # frontend can render the primer table without any special-casing.
@@ -654,7 +748,7 @@ def _run_blast_pipeline(job_id: str, workdir: Path,
         primer_settings['PRIMER_OPT_TM']           = '60.0'
         primer_settings['PRIMER_MAX_TM']           = '65.0'
         primer_settings['PRIMER_PAIR_MAX_DIFF_TM'] = '2.0'
-        primer_settings['PRIMER_MAX_POLY_X']       = '4'
+        primer_settings['PRIMER_MAX_POLY_X']       = '3'
         primer_settings['PRIMER_MIN_SIZE']         = '18'
         primer_settings['PRIMER_MAX_SIZE']         = '25'
 
@@ -702,6 +796,30 @@ def _run_blast_pipeline(job_id: str, workdir: Path,
             return
 
         pairs = [p for p in pairs if p.seq_name == query_chrom]
+
+        # ── Query-sequence filter ─────────────────────────────────────────────
+        # Primers must be substrings of the user's pasted query.
+        # This catches any primers that Primer3 placed outside the query region
+        # (e.g. due to secondary BLAST hits inflating the extraction window).
+        _query_dna = ''.join(
+            l.strip().upper() for l in query_seq.split('\n')
+            if l.strip() and not l.startswith('>')
+        )
+        def _primer_in_query(pair):
+            from primers import reverse_complement as _rc
+            l_fwd = pair.left_seq.upper()  in _query_dna
+            r_rc  = _rc(pair.right_seq).upper() in _query_dna
+            return l_fwd and r_rc
+        _before = len(pairs)
+        pairs = [p for p in pairs if _primer_in_query(p)]
+        if len(pairs) < _before:
+            import logging as _log
+            _log.getLogger(__name__).info(
+                'Query-sequence filter removed %d pair(s) whose primers were '
+                'outside the pasted query (likely from secondary BLAST hits)',
+                _before - len(pairs)
+            )
+
         if not pairs:
             _set_job_done(job_id, {
                 'success': True, 'mode': 'blast', 'db_name': db_name,
@@ -710,13 +828,14 @@ def _run_blast_pipeline(job_id: str, workdir: Path,
                 'warning': (
                     f'No primers found specifically for the query chromosome '
                     f'({query_chrom}). The region may be too similar to other '
-                    f'homeologs for genome-specific primer design.'
+                    f'homeologs for genome-specific primer design. '
+                    f'Try adjusting the amplicon size range.'
                 ),
             })
             return
 
-        # Cap to top 10 pairs
-        pairs = pairs[:10]
+        # Cap to top 20 pairs
+        pairs = pairs[:20]
 
         # ── Step 8: build output ──────────────────────────────────────────────
         _progress(job_id, 8, f'Writing Excel output ({len(pairs)} pairs)')
@@ -729,27 +848,68 @@ def _run_blast_pipeline(job_id: str, workdir: Path,
         wb = openpyxl.Workbook(); wb.remove(wb.active)
         headers = ['Rank','Sequence','Left primer (5->3)','Left start','Left len',
                    'Left Tm','Left GC%','Right primer (5->3)','Right start','Right len',
-                   'Right Tm','Right GC%','Product size','Unique L','Unique R',
-                   '3end L','3end R','Score']
+                   'Right Tm','Right GC%','Product size','Off-target amplicon',
+                   'Heterodimer dG','L Hairpin dG','R Hairpin dG',
+                   'L Homodimer dG','R Homodimer dG','Thermo checks passed','Score']
         _by_seq = _dd(list)
         for _p in pairs:
             _by_seq[_p.seq_name].append(_p)
+        import csv as _csv_mod2
+        _csv_rows_mc = []
         for _sn, _sps in _by_seq.items():
             _cm = _re3.search(r'([1-7][ABDSabds])', _sn)
             _sht = _cm.group(1).upper() if _cm else _re3.sub(r'[:/\\?*\[\]]', '_', _sn.split()[0])[:31]
             _ws2 = wb.create_sheet(title=_sht); _ws2.append(headers)
             for _p in _sps:
-                _ws2.append([_p.rank if hasattr(_p, 'rank') else _sps.index(_p)+1,
+                _th = {
+                    'heterodimer':    calc_thermo(_p.left_seq, _p.right_seq, 'END1').get('dg'),
+                    'left_hairpin':   calc_thermo(_p.left_seq, mode='HAIRPIN').get('dg'),
+                    'right_hairpin':  calc_thermo(_p.right_seq, mode='HAIRPIN').get('dg'),
+                    'left_homodimer': calc_thermo(_p.left_seq, _p.left_seq, 'ANY').get('dg'),
+                    'right_homodimer':calc_thermo(_p.right_seq, _p.right_seq, 'ANY').get('dg'),
+                }
+                _rk_mc = _p.rank if hasattr(_p, 'rank') else _sps.index(_p)+1
+                _ot_mc = 'Yes' if getattr(_p, 'off_target_amplicon', False) else 'No'
+                _ws2.append([_rk_mc,
                               _p.seq_name, _p.left_seq, _p.left_start, _p.left_len,
                               _p.left_tm, _p.left_gc, _p.right_seq, _p.right_start,
-                              _p.right_len, _p.right_tm, _p.right_gc, _p.product_size,
-                              _p.left_diff_count, _p.right_diff_count,
-                              'Y' if _p.left_3end_diff else 'N',
-                              'Y' if _p.right_3end_diff else 'N',
+                              _p.right_len, _p.right_tm, _p.right_gc, _p.product_size, _ot_mc,
+                              _thermo_risk_label(_th['heterodimer']),
+                              _thermo_risk_label(_th['left_hairpin']),
+                              _thermo_risk_label(_th['right_hairpin']),
+                              _thermo_risk_label(_th['left_homodimer']),
+                              _thermo_risk_label(_th['right_homodimer']),
+                              _thermo_summary([_th['heterodimer'], _th['left_hairpin'],
+                                               _th['right_hairpin'], _th['left_homodimer'],
+                                               _th['right_homodimer']]),
                               round(_p.score, 2)])
+                _csv_rows_mc.append([_rk_mc,
+                                     _p.seq_name, _p.left_seq, _p.left_start, _p.left_len,
+                                     _p.left_tm, _p.left_gc, _p.right_seq, _p.right_start,
+                                     _p.right_len, _p.right_tm, _p.right_gc, _p.product_size, _ot_mc,
+                                     _thermo_risk_label(_th['heterodimer']),
+                                     _thermo_risk_label(_th['left_hairpin']),
+                                     _thermo_risk_label(_th['right_hairpin']),
+                                     _thermo_risk_label(_th['left_homodimer']),
+                                     _thermo_risk_label(_th['right_homodimer']),
+                                     _thermo_summary([_th['heterodimer'], _th['left_hairpin'],
+                                                      _th['right_hairpin'], _th['left_homodimer'],
+                                                      _th['right_homodimer']]),
+                                     round(_p.score, 2)])
+        _autofit_xlsx(wb)
         wb.save(str(xlsx_path))
+
+        # Write CSV — same format as xlsx but without 3end columns
         csv_path = workdir / 'primers.csv'
-        write_csv(pairs, 'query', str(csv_path))
+        _csv_hdrs_mc = ['Rank','Sequence','Left primer (5->3)','Left start','Left len',
+                        'Left Tm','Left GC%','Right primer (5->3)','Right start','Right len',
+                        'Right Tm','Right GC%','Product size','Off-target amplicon',
+                        'Heterodimer dG','L Hairpin dG','R Hairpin dG',
+                        'L Homodimer dG','R Homodimer dG','Thermo checks passed','Score']
+        with open(str(csv_path), 'w', newline='') as _cf2:
+            _cw2 = _csv_mod2.writer(_cf2)
+            _cw2.writerow(_csv_hdrs_mc)
+            _cw2.writerows(_csv_rows_mc)
 
         # Build subgenome groups
         from collections import defaultdict
@@ -826,18 +986,22 @@ def _run_blast_pipeline(job_id: str, workdir: Path,
             'warning': _repeat_warning,  # None if no repeat warning
         })
 
+    except subprocess.TimeoutExpired:
+        _set_job_error(job_id,
+            'Alignment timed out — your sequence may be too long. '
+            'Try submitting a shorter region (under 10,000 bp) around your SNP of interest.')
     except Exception as _exc:
-        import traceback
-        _set_job_error(job_id, str(_exc) + '\n' + traceback.format_exc()[-500:])
+        import traceback, logging as _logging
+        _logging.getLogger(__name__).error('Design job %s failed: %s', job_id, traceback.format_exc())
+        _set_job_error(job_id, 'An unexpected error occurred during primer design. Please try again or use a different sequence.')
 
 
 # ── Progress polling endpoint ─────────────────────────────────────────────────
 
 def job_progress(request, job_id: str):
     """Return current progress or final result for a background job."""
-    with _JOBS_LOCK:
-        _cleanup_old_jobs()
-        job = _JOBS.get(job_id)
+    _cleanup_old_jobs()
+    job = _read_job(job_id)
     if job is None:
         return JsonResponse({'error': 'Job not found'}, status=404)
 
@@ -917,13 +1081,12 @@ def run_pipeline(request):
         amp_min_v = max(50,  min(int(request.POST.get('amp_min', 150)), 5000))
         amp_max_v = max(amp_min_v + 50, min(int(request.POST.get('amp_max', 700)), 5000))
         # Register job
-        with _JOBS_LOCK:
-            _JOBS[job_id] = {
-                'status': 'running', 'step': 1,
-                'step_name': BLAST_STEPS[0][1], 'detail': '',
-                'result': None, 'error': None,
-                'started_at': time.time(),
-            }
+        _write_job(job_id, {
+            'status': 'running', 'step': 1,
+            'step_name': BLAST_STEPS[0][1], 'detail': '',
+            'result': None, 'error': None,
+            'started_at': time.time(),
+        })
         # Start background thread
         _t = _threading.Thread(
             target=_run_blast_pipeline,
@@ -1010,7 +1173,7 @@ def run_pipeline(request):
         primer_settings['PRIMER_OPT_TM']           = '60.0'
         primer_settings['PRIMER_MAX_TM']           = '65.0'
         primer_settings['PRIMER_PAIR_MAX_DIFF_TM'] = '2.0'
-        primer_settings['PRIMER_MAX_POLY_X']       = '4'
+        primer_settings['PRIMER_MAX_POLY_X']       = '3'
         primer_settings['PRIMER_MIN_SIZE']         = '18'
         primer_settings['PRIMER_MAX_SIZE']         = '25'
 
@@ -1080,20 +1243,18 @@ def run_pipeline(request):
 
         headers = ['Rank','Sequence','Left primer (5->3)','Left start','Left len',
                    'Left Tm','Left GC%','Right primer (5->3)','Right start','Right len',
-                   'Right Tm','Right GC%','Product size','Unique sites L','Unique sites R',
-                   '3end L','3end R','Score']
+                   'Right Tm','Right GC%','Product size','Off-target amplicon',
+                   'Heterodimer dG','L Hairpin dG','R Hairpin dG',
+                   'L Homodimer dG','R Homodimer dG','Thermo checks passed','Score']
 
         # Group by seq_name
         by_seq = _ddict(list)
         for p in pairs:
             by_seq[p.seq_name].append(p)
 
+        import re as _re2, csv as _csv_mod_t1
+        _csv_rows_t1 = []
         for seq_name, seq_pairs in by_seq.items():
-            # Sheet name max 31 chars
-            # Excel sheet names: clean and shorten
-            import re as _re2
-            clean = _re2.sub(r'[/\\?*\[\]:]', '_', seq_name)
-            # Try to extract short chrom name e.g. 3A, 7B
             chrom_match = _re2.search(r'([1-7][ABDSabds])', seq_name)
             if chrom_match:
                 sheet_name = chrom_match.group(1).upper()
@@ -1102,22 +1263,44 @@ def run_pipeline(request):
             ws = wb.create_sheet(title=sheet_name)
             ws.append(headers)
             for p in seq_pairs:
-                ws.append([
-                    p.rank if hasattr(p, 'rank') else seq_pairs.index(p)+1,
-                    p.seq_name, p.left_seq, p.left_start, p.left_len,
-                    p.left_tm, p.left_gc, p.right_seq, p.right_start, p.right_len,
-                    p.right_tm, p.right_gc, p.product_size,
-                    p.left_diff_count, p.right_diff_count,
-                    'Y' if p.left_3end_diff else 'N',
-                    'Y' if p.right_3end_diff else 'N',
-                    round(p.score, 2)
-                ])
+                _th_t1 = {
+                    'heterodimer':    calc_thermo(p.left_seq, p.right_seq, 'END1').get('dg'),
+                    'left_hairpin':   calc_thermo(p.left_seq, mode='HAIRPIN').get('dg'),
+                    'right_hairpin':  calc_thermo(p.right_seq, mode='HAIRPIN').get('dg'),
+                    'left_homodimer': calc_thermo(p.left_seq, p.left_seq, 'ANY').get('dg'),
+                    'right_homodimer':calc_thermo(p.right_seq, p.right_seq, 'ANY').get('dg'),
+                }
+                _rk_t1 = p.rank if hasattr(p, 'rank') else seq_pairs.index(p)+1
+                _ot_t1 = 'Yes' if getattr(p, 'off_target_amplicon', False) else 'No'
+                _row_t1 = [_rk_t1, p.seq_name, p.left_seq, p.left_start, p.left_len,
+                            p.left_tm, p.left_gc, p.right_seq, p.right_start, p.right_len,
+                            p.right_tm, p.right_gc, p.product_size, _ot_t1,
+                            _thermo_risk_label(_th_t1['heterodimer']),
+                            _thermo_risk_label(_th_t1['left_hairpin']),
+                            _thermo_risk_label(_th_t1['right_hairpin']),
+                            _thermo_risk_label(_th_t1['left_homodimer']),
+                            _thermo_risk_label(_th_t1['right_homodimer']),
+                            _thermo_summary([_th_t1['heterodimer'], _th_t1['left_hairpin'],
+                                             _th_t1['right_hairpin'], _th_t1['left_homodimer'],
+                                             _th_t1['right_homodimer']]),
+                            round(p.score, 2)]
+                ws.append(_row_t1)
+                _csv_rows_t1.append(_row_t1)
 
+        _autofit_xlsx(wb)
         wb.save(str(xlsx_path))
 
-        # Also write CSV for backward compat
+        # Write CSV in same format as xlsx
         csv_path = workdir / 'primers.csv'
-        write_csv(pairs, 'query', str(csv_path))
+        _csv_hdrs_t1 = ['Rank','Sequence','Left primer (5->3)','Left start','Left len',
+                        'Left Tm','Left GC%','Right primer (5->3)','Right start','Right len',
+                        'Right Tm','Right GC%','Product size','Off-target amplicon',
+                        'Heterodimer dG','L Hairpin dG','R Hairpin dG',
+                        'L Homodimer dG','R Homodimer dG','Thermo checks passed','Score']
+        with open(str(csv_path), 'w', newline='') as _cf_t1:
+            _cw_t1 = _csv_mod_t1.writer(_cf_t1)
+            _cw_t1.writerow(_csv_hdrs_t1)
+            _cw_t1.writerows(_csv_rows_t1)
 
         # Group pairs by subgenome (seq_name)
         from collections import defaultdict
@@ -1542,15 +1725,14 @@ def kasp_design(request):
 
     # ── Create async job and start background thread ───────────────────────────
     job_id = str(uuid.uuid4())[:8]
-    with _JOBS_LOCK:
-        _JOBS[job_id] = {
-            'status':     'running',
-            'step':       1,
-            'step_name':  KASP_STEPS[0][1],
-            'detail':     '',
-            'started_at': time.time(),
-            'steps_list': KASP_STEPS,
-        }
+    _write_job(job_id, {
+        'status':     'running',
+        'step':       1,
+        'step_name':  KASP_STEPS[0][1],
+        'detail':     '',
+        'started_at': time.time(),
+        'steps_list': KASP_STEPS,
+    })
 
     def _worker():
         try:
@@ -1627,6 +1809,7 @@ def kasp_design(request):
                     _m.fwd1_seq,_m.fwd1_with_tail,_m.fwd2_seq,_m.fwd2_with_tail,_m.rev_seq,
                     round(_m.fwd1_tm,1),round(_m.fwd2_tm,1),round(_m.rev_tm,1),
                     round(_m.fwd1_gc,1),round(_m.fwd2_gc,1),round(_m.rev_gc,1)])
+            _autofit_xlsx(_wb)
             _wb.save(str(_kasp_workdir / 'kasp_markers.xlsx'))
 
             # MSA viewer data
@@ -1678,23 +1861,14 @@ def kasp_design(request):
                 'msa_data':      msa_data,
             }
 
-            with _JOBS_LOCK:
-                _JOBS[job_id].update({'status': 'done', 'result': result})
+            _update_job(job_id, status='done', result=result)
 
         except subprocess.TimeoutExpired:
-            with _JOBS_LOCK:
-                _JOBS[job_id].update({
-                    'status': 'error',
-                    'error':  'Design timed out — try fewer SNP positions or a smaller genome database',
-                })
+            _update_job(job_id, status='error',
+                        error='Design timed out — try fewer SNP positions or a smaller genome database')
         except Exception as e:
             import traceback as _tb
-            with _JOBS_LOCK:
-                _JOBS[job_id].update({
-                    'status': 'error',
-                    'error':  str(e),
-                    'trace':  _tb.format_exc(),
-                })
+            _update_job(job_id, status='error', error=str(e), trace=_tb.format_exc())
 
     _threading.Thread(target=_worker, daemon=True).start()
     return JsonResponse({'async': True, 'job_id': job_id, 'steps': KASP_STEPS})
@@ -1722,8 +1896,9 @@ def download_selected(request):
 
     headers = ['Rank','Sequence','Left primer (5->3)','Left start','Left len',
                'Left Tm','Left GC%','Right primer (5->3)','Right start','Right len',
-               'Right Tm','Right GC%','Product size','Unique sites L','Unique sites R',
-               '3end L','3end R','Score']
+               'Right Tm','Right GC%','Product size','Off-target amplicon',
+               'Heterodimer dG','L Hairpin dG','R Hairpin dG',
+               'L Homodimer dG','R Homodimer dG','Thermo checks passed','Score']
 
     # Group by seq_name
     from collections import defaultdict
@@ -1737,19 +1912,27 @@ def download_selected(request):
         ws = wb.create_sheet(title=sheet_name)
         ws.append(headers)
         for p in seq_pairs:
+            th = p.get('thermo') or {}
+            def _dg(key): return (th.get(key) or {}).get('dg')
+            _ot_sel = 'Yes' if p.get('off_target_amplicon') else 'No'
+            _dg_vals = [_dg('heterodimer'), _dg('left_hairpin'), _dg('right_hairpin'),
+                        _dg('left_homodimer'), _dg('right_homodimer')]
             ws.append([
                 p.get('rank'), p.get('seq_name'),
                 p.get('left_seq'), p.get('left_start'), p.get('left_len'),
                 p.get('left_tm'), p.get('left_gc'),
                 p.get('right_seq'), p.get('right_start'), p.get('right_len'),
                 p.get('right_tm'), p.get('right_gc'),
-                p.get('product_size'), p.get('left_diff'), p.get('right_diff'),
-                'Y' if p.get('left_3end') else 'N',
-                'Y' if p.get('right_3end') else 'N',
+                p.get('product_size'), _ot_sel,
+                _thermo_risk_label(_dg_vals[0]), _thermo_risk_label(_dg_vals[1]),
+                _thermo_risk_label(_dg_vals[2]), _thermo_risk_label(_dg_vals[3]),
+                _thermo_risk_label(_dg_vals[4]),
+                _thermo_summary(_dg_vals),
                 p.get('score')
             ])
 
     buf = BytesIO()
+    _autofit_xlsx(wb)
     wb.save(buf)
     buf.seek(0)
 
@@ -1815,6 +1998,7 @@ def kasp_download_selected(request):
             m.get('fwd2_seq'),m.get('fwd2_with_tail'),m.get('rev_seq'),
             m.get('fwd1_tm'),m.get('fwd2_tm'),m.get('rev_tm'),
             m.get('fwd1_gc'),m.get('fwd2_gc'),m.get('rev_gc')])
+    _autofit_xlsx(wb)
     buf = BytesIO(); wb.save(buf); buf.seek(0)
     response = HttpResponse(buf.read(),
         content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')

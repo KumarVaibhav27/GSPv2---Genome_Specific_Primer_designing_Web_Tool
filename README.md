@@ -1,7 +1,7 @@
 # GSP — Genome Specific Primer Design Tool
 ### Version 2.0
 
-GSP is a web-based tool for designing PCR primers that are specific to a single subgenome in polyploid species. It is primarily designed for wheat (*Triticum aestivum*, ABD hexaploid) and related species, but works with any set of homeologous sequences.
+GSP is a web-based tool for designing PCR primers that are specific to a single subgenome in polyploid species. It supports 48 genome assemblies spanning the full ploidy range of the Triticeae tribe: 20 barley (*Hordeum vulgare*) accessions, one rye (*Secale cereale* Lo7) assembly, and 27 wheat and *Aegilops* assemblies covering elite cultivars and diploid progenitors.
 
 ---
 
@@ -17,7 +17,7 @@ Version 1 was a command-line C++ tool that required manual sequence preparation 
 | KASP marker design | Not available | Full SNP detection + KASP primer output |
 | Alignment viewer | Not available | Interactive MSA viewer with primer overlay |
 | Output | CSV only | CSV + Excel (multi-sheet by chromosome) |
-| Supported genomes | 1 | 25 across 4 species groups |
+| Supported genomes | 1 | 48 across 6 species groups |
 
 ---
 
@@ -168,18 +168,24 @@ The forward orientation is tried first. If Primer3 cannot find a suitable primer
 
 ## Supported Reference Genomes
 
-25 genome assemblies across 4 species groups:
+48 genome assemblies across 6 species groups:
 
-**Bread wheat (*T. aestivum* ABD — hexaploid)**
+**Barley (*Hordeum vulgare* H — diploid) — 20 accessions**
+Morex v3 (2021), Morex v1 (2017), and 18 additional accessions from the barley pan-genome (Jayakodi et al., 2020; Mascher et al., 2021)
+
+**Rye (*Secale cereale* R — diploid) — 1 assembly**
+Lo7 (2021; Rabanus-Wallace et al., 2021)
+
+**Bread wheat (*T. aestivum* ABD — hexaploid) — 14 assemblies**
 Chinese Spring IWGSC ref1 (2018), Chinese Spring IWGSC ref2.1 (2021), Kariega (2022), Fielder (2021), Jagger, Arina, Julius, Lancer, Landmark, Mace, Mattis, Norin61, Spelta, Stanley (all 10+ Genome Project 2019)
 
-**Durum wheat (*T. turgidum* AB — tetraploid)**
+**Durum wheat (*T. turgidum* AB — tetraploid) — 2 assemblies**
 Svevo (2019), Zavitan (2019)
 
-**Einkorn wheat (*T. monococcum* A — diploid)**
+**Einkorn wheat (*T. monococcum* A — diploid) — 2 assemblies**
 TA299 (2022), TA10622 (2022)
 
-**Aegilops species**
+**Aegilops species — 9 assemblies**
 *Ae. tauschii* — AL8-78 (2017), 5.0 Luo (2021), AY17, AY61, T093, XJ02 (2021)
 *Ae. longissima* Sd (2022), *Ae. speltoides* Sb (2022), *Ae. sharonensis* Sd (2022)
 
@@ -189,10 +195,11 @@ TA299 (2022), TA10622 (2022)
 
 ```
 GSP/
-├── bin/                        # External binaries
+├── bin/                        # External binaries (fully bundled — no system installs needed)
 │   ├── muscle5                 # MUSCLE wrapper script — calls muscle (v3) with v5-compatible flags
 │   ├── muscle                  # MUSCLE v3 binary (Linux x86-64)
 │   ├── primer3_core            # Primer3 — primer design engine
+│   ├── ntthal                  # Primer3 thermodynamics binary — ΔG calculations
 │   └── bedtools                # BEDTools (symlink to Homebrew on macOS)
 │
 ├── blast_db/                   # BLAST nucleotide databases (one folder per genome)
@@ -237,6 +244,7 @@ GSP/
 - BEDTools — `brew install bedtools`
 - MUSCLE — bundled in `bin/muscle` and `bin/muscle5`
 - Primer3 — bundled in `bin/primer3_core`
+- **ntthal** (part of Primer3) — required for thermodynamic calculations (ΔG values). Bundled in `bin/ntthal` alongside `primer3_core`. No extra installation needed.
 
 ### First-time setup
 
@@ -249,6 +257,9 @@ source venv/bin/activate
 
 # Install Python dependencies
 pip install django openpyxl anthropic
+
+# ntthal is already bundled in bin/ — no extra step needed
+# (If you replace the Primer3 binary, copy the matching ntthal into bin/ as well)
 ```
 
 ### Configuration
@@ -258,7 +269,8 @@ All tool paths and settings are controlled via environment variables with sensib
 | Environment Variable | Default (macOS) | Description |
 |---|---|---|
 | `GSP_MUSCLE_PATH` | `bin/muscle5` | Path to MUSCLE binary or wrapper |
-| `GSP_PRIMER3_PATH` | `/opt/homebrew/bin/primer3_core` | Path to Primer3 binary |
+| `GSP_PRIMER3_PATH` | `bin/primer3_core` | Path to Primer3 binary |
+| `GSP_NTTHAL_PATH` | `bin/ntthal` | Path to ntthal binary (thermodynamics; ships with Primer3) |
 | `GSP_BLASTN_PATH` | `/opt/homebrew/bin/blastn` | Path to blastn binary |
 | `GSP_BLASTDBCMD_PATH` | `/opt/homebrew/bin/blastdbcmd` | Path to blastdbcmd binary |
 | `GSP_BLAST_DB_ROOT` | `../blast_db/` | Root directory containing BLAST databases |

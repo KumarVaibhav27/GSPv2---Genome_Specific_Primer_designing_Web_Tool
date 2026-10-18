@@ -185,6 +185,94 @@ _MAP = {
         'gnl':              'Aesh',
         'blast_chr_prefix': 'Aesh_',
     },
+
+    # ── Barley (H. vulgare) ────────────────────────────────────────────────
+    'Akashinriki (barley)': {
+        'gff':        'H_vulgare_Akashinriki.gff.gz',
+        'chr_prefix': '',
+    },
+    'B1K-04-12 (barley)': {
+        'gff':        'H_vulgare_B1K-04-12.gff.gz',
+        'chr_prefix': '',
+    },
+    'Barke (barley)': {
+        'gff':        'H_vulgare_Barke.gff.gz',
+        'chr_prefix': '',
+    },
+    'Golden Promise (barley)': {
+        'gff':        'H_vulgare_Golden_Promise.gff.gz',
+        'chr_prefix': '',
+    },
+    'HOR10350 (barley)': {
+        'gff':        'H_vulgare_HOR10350.gff.gz',
+        'chr_prefix': '',
+    },
+    'HOR13821 (barley)': {
+        'gff':        'H_vulgare_HOR13821.gff.gz',
+        'chr_prefix': '',
+    },
+    'HOR13942 (barley)': {
+        'gff':        'H_vulgare_HOR13942.gff.gz',
+        'chr_prefix': '',
+    },
+    'HOR21599 (barley)': {
+        'gff':        'H_vulgare_HOR21599.gff.gz',
+        'chr_prefix': '',
+    },
+    'HOR3081 (barley)': {
+        'gff':        'H_vulgare_HOR3081.gff.gz',
+        'chr_prefix': '',
+    },
+    'HOR3365 (barley)': {
+        'gff':        'H_vulgare_HOR3365.gff.gz',
+        'chr_prefix': '',
+    },
+    'HOR7552 (barley)': {
+        'gff':        'H_vulgare_HOR7552.gff.gz',
+        'chr_prefix': '',
+    },
+    'HOR8148 (barley)': {
+        'gff':        'H_vulgare_HOR8148.gff.gz',
+        'chr_prefix': '',
+    },
+    'HOR9043 (barley)': {
+        'gff':        'H_vulgare_HOR9043.gff.gz',
+        'chr_prefix': '',
+    },
+    'Hockett (barley)': {
+        'gff':        'H_vulgare_Hockett.gff.gz',
+        'chr_prefix': '',
+    },
+    'Igri (barley)': {
+        'gff':        'H_vulgare_Igri.gff.gz',
+        'chr_prefix': '',
+    },
+    'Morex v3 (barley)': {
+        'gff':        'H_vulgare_Morex_v3.gff.gz',
+        'chr_prefix': '',
+    },
+    'OUN333 (barley)': {
+        'gff':        'H_vulgare_OUN333.gff.gz',
+        'chr_prefix': '',
+    },
+    'RGT Planet (barley)': {
+        'gff':        'H_vulgare_RGT_Planet.gff.gz',
+        'chr_prefix': '',
+    },
+    'ZDM01467 (barley)': {
+        'gff':        'H_vulgare_ZDM01467.gff.gz',
+        'chr_prefix': '',
+    },
+    'ZDM02064 (barley)': {
+        'gff':        'H_vulgare_ZDM02064.gff.gz',
+        'chr_prefix': '',
+    },
+
+    # ── Rye (S. cereale) ──────────────────────────────────────────────────
+    'Lo7 (rye 2018)': {
+        'gff':        'S_cereale_Lo7.gff.gz',
+        'chr_prefix': '',
+    },
 }
 
 

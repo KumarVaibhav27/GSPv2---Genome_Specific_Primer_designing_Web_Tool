@@ -1,8 +1,24 @@
+# Large genome databases
 blast_db/
+
+# Python virtual environment
 venv/
+
+# BLAST binaries (third-party)
+gsp_web/ncbi-blast-2.16.0+/
+
+# User job result files
+gsp_web/media/
+
+# Python cache files
 __pycache__/
-**/__pycache__/
 *.pyc
-db.sqlite3
-media/jobs/
-gsp_web/.env
+*.pyo
+*.pyd
+
+# Django local settings
+*.sqlite3
+
+# OS files
+.DS_Store
+Thumbs.db

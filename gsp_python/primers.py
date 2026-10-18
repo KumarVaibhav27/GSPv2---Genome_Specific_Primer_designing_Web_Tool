@@ -474,8 +474,9 @@ def genome_blast_filter(
         # 3' end hit — direction depends on primer type:
         # LEFT:  3' end = high qend (end of primer sequence)
         # RIGHT: we BLASTed the RC, so 3' end of primer = qstart=1 of RC
-        # Only flag as a risky 3' end hit if the perfect match is ≥18bp —
-        # shorter matches are harmless noise in a large repetitive genome.
+        # Flag as a risky 3' end hit if alignment is ≥18 bp at ≥95% identity
+        # and reaches the 3' end. Shorter matches are harmless noise in a
+        # large repetitive genome.
         if pident >= 95.0 and aln_len >= 18:
             if is_right:
                 if qstart <= 1 + END_TOLERANCE:
@@ -802,10 +803,18 @@ def design_primers(
                  seq_obj.name[:40], len(raw_seq), len(diff_sites))
 
         with tempfile.TemporaryDirectory(prefix="gsp_p3_") as tmp:
+            # Restrict primer placement to the hit region only.
+            # 15 bp were added on each side during extraction as thermodynamic
+            # context for Primer3; SEQUENCE_INCLUDED_REGION prevents primers
+            # from being placed in that flanking context.
+            seq_settings = dict(settings)
+            if len(raw_seq) > 30:
+                seq_settings["SEQUENCE_INCLUDED_REGION"] = f"15,{len(raw_seq) - 30}"
+
             # Standard free design
             lefts, rights = run_primer3(
                 seq_obj.name, raw_seq, primer3_bin,
-                settings, seq_obj.trimmed,
+                seq_settings, seq_obj.trimmed,
                 workdir=Path(tmp)
             )
 
@@ -813,7 +822,7 @@ def design_primers(
             # is available (blast_db mode). In direct mode this adds 300+ Primer3
             # calls with no benefit since there is no genome filter.
             snp_positions = sorted(diff_sites)[:15] if blast_db else []
-            forced_settings = dict(settings)
+            forced_settings = dict(seq_settings)  # inherits SEQUENCE_INCLUDED_REGION
             forced_settings["PRIMER_NUM_RETURN"] = "3"
 
             for snp_col in snp_positions:
@@ -821,7 +830,11 @@ def design_primers(
                 raw_pos = sum(
                     1 for c in seq_obj.trimmed[:snp_col+1] if c != '-'
                 ) - 1
-                if raw_pos < 18 or raw_pos >= len(raw_seq) - 18:
+                # Guard: forced primer must be far enough from both edges so
+                # its full body (up to PRIMER_MAX_SIZE=25 bp) stays within the
+                # 15 bp flank boundary.  raw_pos < 40 means a 25 bp primer
+                # ending here would start at position 15 — the safe minimum.
+                if raw_pos < 40 or raw_pos >= len(raw_seq) - 40:
                     continue
 
                 # Force left primer to end at this SNP
@@ -846,6 +859,22 @@ def design_primers(
 
         log.info("[%s] Primer3 raw: %d left, %d right",
                  seq_obj.name[:40], len(lefts), len(rights))
+
+        # ── Boundary filter: ensure every primer is within the hit region ─────
+        # SEQUENCE_INCLUDED_REGION can be bypassed by SEQUENCE_FORCE_LEFT/RIGHT_END
+        # (Primer3 documented behaviour). This Python-level check is the hard
+        # guarantee: reject any primer whose sequence is not found in the
+        # hit region (raw_seq[15 : len-15]), regardless of how Primer3 placed it.
+        _hit_region = raw_seq[15 : len(raw_seq) - 15].upper()
+        _before = len(lefts) + len(rights)
+        lefts  = [p for p in lefts
+                  if p.sequence.upper() in _hit_region]
+        rights = [p for p in rights
+                  if reverse_complement(p.sequence).upper() in _hit_region]
+        _removed = _before - len(lefts) - len(rights)
+        if _removed:
+            log.info("[%s] Boundary filter removed %d primer(s) outside hit region",
+                     seq_obj.name[:40], _removed)
 
         # ── Step 2: in-memory homeolog specificity filter ─────────────────────
         lefts  = [p for p in lefts
@@ -1143,6 +1172,7 @@ def design_primers_single_copy(
     blastn_path:       str             = "blastn",
     target_chroms:     set[str] | None = None,
     require_3end_unique: bool          = True,
+    included_region:   tuple | None    = None,
 ) -> list[PrimerPair]:
     """
     Design genome-specific primers for a SINGLE-COPY gene (no homeologs).
@@ -1175,10 +1205,17 @@ def design_primers_single_copy(
              seq_name[:40], len(sequence))
 
     # ── Step 1: Run Primer3 ───────────────────────────────────────────────────
+    # Apply included region restriction if caller provided one (e.g. when
+    # sequence was extracted with a small flanking context around the BLAST hit).
+    run_settings = dict(settings)
+    if included_region is not None and len(sequence) > included_region[0] + 1:
+        run_settings["SEQUENCE_INCLUDED_REGION"] = \
+            f"{included_region[0]},{included_region[1]}"
+
     with tempfile.TemporaryDirectory(prefix="gsp_sc_") as tmp:
         lefts, rights = run_primer3(
             seq_name, sequence, primer3_bin,
-            settings, sequence,          # trimmed == full seq (no MSA)
+            run_settings, sequence,      # trimmed == full seq (no MSA)
             workdir=Path(tmp)
         )
 
