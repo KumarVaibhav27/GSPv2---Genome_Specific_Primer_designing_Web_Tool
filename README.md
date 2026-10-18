@@ -235,6 +235,20 @@ GSP/
 
 ---
 
+## Example Data
+
+The `examples/` directory contains a worked example for Tab 2 (BLAST Against Genome):
+
+| File | Description |
+|---|---|
+| `examples/example_input.fas` | Example query sequence (~1,000 bp) in FASTA format |
+| `examples/example_output.xlsx` | Expected Excel output from GSP 2.0 for the above input |
+| `examples/example_output.csv` | Same results in CSV format |
+
+To reproduce: paste `example_input.fas` into Tab 2, select Chinese Spring IWGSC RefSeq v1.0, and click Run. The output should match `example_output.xlsx`.
+
+---
+
 ## Setup & Running
 
 ### Requirements
