@@ -42,7 +42,7 @@ Design genome-specific primers from a single query sequence, without needing the
 
 - Paste a single FASTA query sequence and select a reference genome
 - GSP runs BLASTN against the genome in a background thread, extracts all homeologous hits, aligns them with MUSCLE, and identifies subgenome-unique positions
-- A live progress bar tracks the job (large genomes take 1–5 minutes)
+- A live progress bar tracks the job (large genomes typically complete within a few minutes, depending on genome size and server load)
 - Results are grouped by chromosome with per-primer location verification
 - Download as multi-sheet Excel (one sheet per chromosome group)
 
@@ -86,7 +86,7 @@ Use this tab when you have a single query sequence and want primers that are spe
 2. Select the reference genome from the dropdown (e.g. Chinese Spring IWGSC ref2.1).
 3. Optionally adjust the amplicon size range (default 150–700 bp).
 4. Click **Run BLAST + Design Primers**.
-5. A progress bar tracks the job — large genomes (wheat ~14 GB) take 1–5 minutes.
+5. A progress bar tracks the job — runtime varies with genome size and server load.
 6. Results appear grouped by chromosome. Primers marked **3′-specific** have their 3′ end verified genome-wide.
 7. Click **Download Excel** to get a multi-sheet workbook (one sheet per chromosome group).
 
@@ -321,7 +321,7 @@ Introns diverge faster between homeologs than coding exons. A primer designed in
 MUSCLE v5 (`-align` / `-output` flags) replaced the older v3 binary. It is faster and handles longer sequences better. Note: v3 and v5 use different command-line syntax — if you replace the binary, ensure it is v5.
 
 **Why background threads for Tab 2?**
-BLAST against a large genome (wheat ~14 GB) can take 1–5 minutes. Running this synchronously would time out the HTTP connection. Tab 2 spawns a background thread, writes progress to an in-memory dict (`_JOBS`), and the frontend polls every 2 seconds via `/job-progress/<job_id>/`.
+BLAST against a large genome (wheat ~14 GB) can take several minutes depending on genome size and server load. Running this synchronously would time out the HTTP connection. Tab 2 spawns a background thread, writes progress to an in-memory dict (`_JOBS`), and the frontend polls every 2 seconds via `/job-progress/<job_id>/`.
 
 **Why Primer3 `SEQUENCE_FORCE_LEFT_END` for KASP?**
 KASP primers must have their 3′ end exactly at the SNP position — this is what makes them allele-specific. `SEQUENCE_FORCE_LEFT_END` forces Primer3 to anchor the primer's 3′ base at the specified position, then designs the rest of the primer upstream.
